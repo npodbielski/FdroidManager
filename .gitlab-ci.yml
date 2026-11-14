@@ -1,0 +1,287 @@
+# Pipeline layout: .gitlab-ci.yml + ci/coverage-gate.sh.
+# Stages: build → test (with 95% coverage gate) → validate → deploy → release.
+
+include:
+  - project: "ci/templates"
+    ref: "main"
+    file: "/buildah-image.yml"
+  - project: "ci/templates"
+    ref: "main"
+    file: "/release.yml"
+
+stages: [build, test, validate, deploy, release]
+
+image: mcr.microsoft.com/dotnet/sdk:10.0
+
+variables:
+  TEST_RESULTS_DIR: './test-results'
+
+before_script:
+  - dotnet restore FdroidMgr.slnx
+
+build:
+  stage: build
+  script:
+    # Syntax-check the CI scripts first: a syntax error should fail in seconds.
+    - bash -n ci/coverage-gate.sh
+    - bash -n ci/e2e-oidc-login.sh
+    - bash -n ci/ui-rig/run.sh
+    - dotnet build --no-restore -c Release
+  artifacts:
+    when: on_success
+    expire_in: 1 week
+    paths:
+      - src/FdroidMgr.Api/bin/Release/net10.0/
+
+style-check:
+  stage: build
+  # Hard style gate: code style rules at :error severity from .editorconfig —
+  # in particular csharp_prefer_braces (IDE0011): no brace-less
+  # single-statement control statements (if/else/for/foreach/while/do).
+  # Standard dotnet toolchain, no license. Rider enforces the same rule from
+  # the braces_for_* keys in the same .editorconfig, so the IDE cleanup adds
+  # braces instead of removing them.
+  script:
+    - dotnet format FdroidMgr.slnx style --verify-no-changes --severity error
+
+tests:
+  stage: test
+  # The dotnet sdk image ships git but no JDK; keytool is needed by the
+  # key-generation tests, so install a headless JRE first.
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq openjdk-17-jre-headless >/dev/null
+    - dotnet restore FdroidMgr.slnx
+  script:
+    - dotnet test test/FdroidMgr.Tests.Unit --no-restore -c Release --coverlet --coverlet-output-format cobertura --results-directory $TEST_RESULTS_DIR --report-junit --report-junit-filename rspec-unit.xml
+    - dotnet test test/FdroidMgr.Tests.Component --no-restore -c Release --coverlet --coverlet-output-format cobertura --results-directory $TEST_RESULTS_DIR --report-junit --report-junit-filename rspec-component.xml
+    # Coverage gate (merged over both runs) + gap table + the coverage-widget
+    # "Total" line: fails the job below the 95% line-coverage floor.
+    - bash ci/coverage-gate.sh "$TEST_RESULTS_DIR"
+  coverage: '/Total\s*\|\s*(\d+(?:\.\d+)?)%/'
+  artifacts:
+    when: always
+    paths:
+      - $TEST_RESULTS_DIR/rspec-*.xml
+      - $TEST_RESULTS_DIR/coverage.cobertura.*.xml
+    reports:
+      junit:
+        - $TEST_RESULTS_DIR/rspec-*.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: $TEST_RESULTS_DIR/coverage.cobertura.*.xml
+
+format:
+  stage: validate
+  script:
+    - dotnet format FdroidMgr.slnx --verify-no-changes
+  allow_failure: true
+
+# Image build via the shared ci/templates job. Two outputs: the docker-archive
+# artifact (e2e + dockerhub jobs) and the :<sha> + :latest registry tags.
+image-build:
+  extends: .buildah-image
+  stage: validate
+  variables:
+    BUILDAH_CONTEXT: "."
+    BUILDAH_DOCKERFILE: Containerfile
+    BUILDAH_ARCHIVE: fdroidmgr-$CI_COMMIT_SHORT_SHA.tar
+    IMAGE_REFS: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA $CI_REGISTRY_IMAGE:latest"
+    # the e2e jobs load the archive — a registry problem must not block them
+    IMAGE_PUSH_REQUIRED: "false"
+  before_script: []
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - fdroidmgr-$CI_COMMIT_SHORT_SHA.tar
+
+# Push the built image to Docker Hub. Master branch only; reuses the
+# docker-archive artifact from image-build (no rebuild). Logs in with a Docker
+# Hub personal access token (CI_DOCKER_HUB_PAT) and the account name
+# (CI_DOCKER_HUB_USER), then publishes :latest and :<commit-sha>.
+dockerhub-push:
+  stage: deploy
+  tags: [docker-privileged]
+  image: quay.io/podman/stable
+  needs: ["image-build"]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_DOCKER_HUB_PAT != "" && $CI_DOCKER_HUB_USER != ""'
+      when: on_success
+    - when: never
+  before_script: []
+  variables:
+    STORAGE_DRIVER: vfs
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    IMAGE_TAR: fdroidmgr-$CI_COMMIT_SHORT_SHA.tar
+  script:
+    - set -eux
+    - podman --storage-driver=vfs load -i "$IMAGE_TAR"
+    - podman --storage-driver=vfs tag "$IMAGE_TAG" "docker.io/${CI_DOCKER_HUB_USER}/fdroidmgr:latest"
+    - podman --storage-driver=vfs tag "$IMAGE_TAG" "docker.io/${CI_DOCKER_HUB_USER}/fdroidmgr:${CI_COMMIT_SHORT_SHA}"
+    - printf '%s' "${CI_DOCKER_HUB_PAT}" | podman --storage-driver=vfs login docker.io -u "${CI_DOCKER_HUB_USER}" --password-stdin
+    - podman --storage-driver=vfs push "docker.io/${CI_DOCKER_HUB_USER}/fdroidmgr:latest"
+    - podman --storage-driver=vfs push "docker.io/${CI_DOCKER_HUB_USER}/fdroidmgr:${CI_COMMIT_SHORT_SHA}"
+
+# OIDC login E2E: boots the image next to a tiny IdP (oidc-server-mock), fills
+# the anonymous first-run wizard (POST /api/auth/oauth) — the handler picks the
+# config up live, no restart — then drives the interactive login (challenge →
+# mock login form → callback → session cookie → /api/auth/me) with pure curl +
+# a shared cookie jar, no browser (ci/e2e-oidc-login.sh, plans/done/oauth-login.md §10).
+e2e-oidc:
+  stage: validate
+  tags: [docker-privileged]
+  image: quay.io/podman/stable
+  needs: ["image-build"]
+  before_script: []
+  variables:
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    IMAGE_TAR: fdroidmgr-$CI_COMMIT_SHORT_SHA.tar
+    E2E_PORT: "8082"
+    OIDC_PORT: "8084"
+    E2E_MASTER_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef
+  script:
+    - set -eux
+    # 1. Load the fdroidmgr image artifact (docker-archive) built by image-build.
+    - podman --storage-driver=vfs load -i "$IMAGE_TAR"
+    # 2. Fresh dirs for /data (SQLite) + /config (wizard-written appsettings.json).
+    - DATA_ROOT="$(mktemp -d)"
+    - CONFIG_ROOT="$(mktemp -d)"
+    # Persist temp paths for after_script (separate shell) cleanup.
+    - printf '%s\n%s\n' "$DATA_ROOT" "$CONFIG_ROOT" > .e2e-oidc-tmp-paths
+    - OIDC_CTR="fdroidmgr-oidc-mock-$CI_JOB_ID"
+    - APP_CTR="fdroidmgr-oidc-$CI_JOB_ID"
+    # 3. Tiny IdP: oidc-server-mock (IS4) configured from ci/oidc/*.json.
+    - >
+      podman --storage-driver=vfs run -d --rm --name "$OIDC_CTR" --network=host
+      -e CLIENTS_CONFIGURATION_PATH=/tmp/config/clients.json
+      -e USERS_CONFIGURATION_PATH=/tmp/config/users.json
+      -e ASPNETCORE_URLS="http://+:${OIDC_PORT}"
+      -v "$CI_PROJECT_DIR/ci/oidc:/tmp/config:ro"
+      docker.io/soluto/oidc-server-mock:latest
+    # 4. Manager, first boot (unconfigured): /config mount is empty, so the UI's
+    #    OAuth wizard is the only screen. FDROID_REPO_ROOT points nowhere so the
+    #    boot-time `fdroid update` is a no-op (no repo needed for a login test).
+    - >
+      podman --storage-driver=vfs run -d --name "$APP_CTR" --network=host
+      -v "$DATA_ROOT":/data
+      -v "$CONFIG_ROOT":/config
+      -e ASPNETCORE_URLS="http://+:${E2E_PORT}"
+      -e FDROID_CONFIG_FILE=/config/appsettings.json
+      -e FDROID_MASTER_KEY="$E2E_MASTER_KEY"
+      -e FDROID_REPO_ROOT=/nonexistent
+      "$IMAGE_TAG"
+    # 5. Wait for the anonymous oauth/status endpoint.
+    - |
+      READY=0
+      for _ in $(seq 1 90); do
+        if curl -fs "http://localhost:${E2E_PORT}/api/auth/oauth/status" >/dev/null 2>&1; then
+          READY=1
+          break
+        fi
+        sleep 2
+      done
+      if [ "$READY" != "1" ]; then
+        podman --storage-driver=vfs logs "$APP_CTR" || true
+        echo "❌ API did not become ready"
+        exit 1
+      fi
+    # 6. One-time wizard (anonymous until configured): save the provider settings.
+    - |
+      WIZARD=$(curl -sS -w '\n%{http_code}' -X POST "http://localhost:${E2E_PORT}/api/auth/oauth" \
+        -H 'Content-Type: application/json' \
+        -d '{"authority":"http://localhost:'"$OIDC_PORT"'","clientId":"fdroidmgr","allowInsecure":true,"scopes":["openid","profile","email"]}')
+      echo "$WIZARD"
+      if ! printf '%s' "$WIZARD" | grep -q '201'; then
+        echo "❌ OAuth wizard did not return 201"
+        exit 1
+      fi
+    # 7. No restart needed: the OpenIdConnect handler reads the saved config
+    #    live (plans/done/no-restart-plan.md). Poll until the challenge actually
+    #    redirects to the IdP (behavior-based; the file watcher alone is not a
+    #    reliable readiness signal on container mounts).
+    - |
+      READY=0
+      for _ in $(seq 1 90); do
+        LOC=$(curl -fs -D - -o /dev/null "http://localhost:${E2E_PORT}/api/auth/login" 2>/dev/null | awk 'tolower($1)=="location:"{print $2}')
+        if printf '%s' "$LOC" | grep -q "localhost:${OIDC_PORT}"; then
+          READY=1
+          break
+        fi
+        sleep 2
+      done
+      if [ "$READY" != "1" ]; then
+        podman --storage-driver=vfs logs "$APP_CTR" || true
+        echo "❌ OIDC challenge did not start redirecting to the IdP"
+        exit 1
+      fi
+    # 8. Drive the interactive login with a shared cookie jar (no browser).
+    - bash ci/e2e-oidc-login.sh "http://localhost:${E2E_PORT}" "http://localhost:${OIDC_PORT}"
+  after_script:
+    - podman --storage-driver=vfs rm -f fdroidmgr-oidc-$CI_JOB_ID fdroidmgr-oidc-mock-$CI_JOB_ID 2>/dev/null || true
+    - rm -rf $(cat .e2e-oidc-tmp-paths 2>/dev/null) 2>/dev/null || true
+    - rm -f .e2e-oidc-tmp-paths
+
+# Browser checks for wwwroot (ci/ui-rig): the real ui.html/ui.js in a headless
+# browser against a stubbed /api. ui.js has no other coverage — see
+# ci/ui-rig/README.md for what it does and does not prove.
+ui-rig:
+  stage: validate
+  # Advisory: LIGHTPANDA_URL is the unversioned nightly, so a browser regression
+  # must not block a merge. Pin the asset and drop this line to gate on it.
+  allow_failure: true
+  image: node:22-bookworm-slim
+  before_script: []
+  variables:
+    LIGHTPANDA_URL: "https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux"
+  rules:
+    # Without a merge_request_event rule of its own, this job would make GitLab
+    # open merge request pipelines that contain nothing else — a green MR widget
+    # next to a failed branch pipeline. Pipelines stay as they were: per push.
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+    # The nightly binary is ~170 MB: only pay for it when the UI can have changed.
+    - changes:
+        paths:
+          - src/FdroidMgr.Api/wwwroot/**/*
+          - ci/ui-rig/**/*
+          - .gitlab-ci.yml
+  script:
+    - node ci/ui-rig/get-binary.mjs "$LIGHTPANDA_URL" "$CI_PROJECT_DIR/lightpanda"
+    - LIGHTPANDA="$CI_PROJECT_DIR/lightpanda" ci/ui-rig/run.sh
+
+# wwwroot/css/unocss.css is generated at dev time (npm run unocss:build); this
+# regenerates it and fails when the committed file does not match the markup.
+# Advisory: it points at a forgotten build, not at a broken app.
+unocss-check:
+  stage: validate
+  allow_failure: true
+  image: node:22
+  before_script: []
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+    - changes:
+        paths:
+          - src/FdroidMgr.Api/wwwroot/**/*
+          - uno.config.js
+          - package.json
+          - .gitlab-ci.yml
+  script:
+    - npm ci --silent --no-audit --fund=false
+    - npm run --silent unocss:build
+    - |
+      if ! git diff --exit-code src/FdroidMgr.Api/wwwroot/css/unocss.css; then
+        echo "unocss.css is stale - run 'npm run unocss:build' and commit the generated file"
+        exit 1
+      fi
+
+release:
+  extends: .release
+  stage: release
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+  variables:
+    GIT_DEPTH: "0"
+    NUGET_VERSION_FILE: Version.props
+    GITHUB_MIRROR_URL: "git@github.com:npodbielski/FdroidManager.git"
+    GITHUB_MIRROR_BRANCH: main

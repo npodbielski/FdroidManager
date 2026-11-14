@@ -1,0 +1,15 @@
+{
+  "name": "fdroidmgr-ui",
+  "private": true,
+  "type": "module",
+  "description": "Dev-time tooling for wwwroot (the app itself serves static files).",
+  "scripts": {
+    "unocss:build": "unocss \"src/FdroidMgr.Api/wwwroot/**/*.{html,js}\" -o src/FdroidMgr.Api/wwwroot/css/unocss.css",
+    "unocss:check": "npm run unocss:build --silent && git diff --exit-code src/FdroidMgr.Api/wwwroot/css/unocss.css",
+    "watch": "unocss \"src/FdroidMgr.Api/wwwroot/**/*.{html,js}\" -o src/FdroidMgr.Api/wwwroot/css/unocss.css --watch"
+  },
+  "devDependencies": {
+    "@unocss/cli": "66.10.5",
+    "@unocss/preset-wind": "66.10.5"
+  }
+}

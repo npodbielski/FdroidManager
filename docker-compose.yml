@@ -1,0 +1,58 @@
+# Drop-in compose for fdroidmgr. Usage:
+#
+#   cp .env.example .env          # then edit values (at least FDROID_MASTER_KEY)
+#   docker compose up -d          # pulls the prebuilt image from Docker Hub
+#
+# Host dirs default to ./data (DB+keys), ./config (OIDC appsettings.json) and
+# ./fdroidrepo (repo root: existing repo, or an empty dir for fresh init).
+# Override in .env if needed, e.g.:
+#
+#   FDROID_REPO_HOST=/srv/fdroid/repo
+#   FDROID_IMAGE=docker.io/npodbielski/fdroidmgr:latest
+services:
+  fdroidmgr:
+    # Pull the prebuilt image from Docker Hub (the pipeline publishes it on
+    # master). To build from source instead, uncomment the build block and run
+    # `docker compose up -d --build`.
+    image: ${FDROID_IMAGE:-docker.io/npodbielski/fdroidmgr:latest}
+    # build:
+    #   context: .
+    #   dockerfile: Containerfile
+    container_name: fdroidmgr
+    restart: unless-stopped
+    ports:
+      - "${FDROID_PORT:-8082}:8080"
+    volumes:
+      - ./data:/data
+      - ./config:/config
+      # Existing repo: point FDROID_REPO_HOST at the repo root (config.yml +
+      # keystore.p12 + metadata/ + repo/) and the manager adopts it in place,
+      # reusing the same repo signing key. Fresh install: leave the default
+      # empty dir and run "Initialize repository" from the Web UI.
+      - ${FDROID_REPO_HOST:-./fdroidrepo}:/data/fdroidrepo
+      # Android build-tools (aapt/apksigner) are baked into the image — no SDK mount.
+    environment:
+      FDROID_CONFIG_FILE: /config/appsettings.json
+      FDROID_MASTER_KEY: ${FDROID_MASTER_KEY:?Set FDROID_MASTER_KEY in .env (openssl rand -hex 32)}
+      FDROID_REPO_URL: ${FDROID_REPO_URL:-http://localhost:8082/fdroid/repo}
+      FDROID_REPO_NAME: ${FDROID_REPO_NAME:-My F-Droid Repository}
+      # Public base URL the browser uses (TLS reverse proxy). Used to build the
+      # OIDC redirect_uri and the canonical repo URL.
+      FDROID_PUBLIC_URL: ${FDROID_PUBLIC_URL:-}
+      # Persistent ASP.NET DataProtection key ring (OIDC state + sign-in cookie
+      # survive restarts/redeploys). Lives on the /data mount.
+      FDROID_DATAPROTECTION_PATH: /data/dp-keys
+      FDROID_REPO_ROOT: /data/fdroidrepo
+      FDROID_REPO_PATH: /data/fdroidrepo/repo
+      FDROID_REPO_PUBLIC_PATH: ${FDROID_REPO_PUBLIC_PATH:-/data/fdroidrepo/public}
+      FDROID_KEY_PATH: /data/keys
+      FDROID_DB: "Data Source=/data/fdroidmgr.db"
+      # When true, the served repo (index/APKs/icons) requires an API key or an
+      # interactive session; F-Droid passes its key as HTTP Basic auth
+      # (https://user:key@host/fdroid/repo). Default false = public repo.
+      FDROID_REQUIRE_REPO_AUTH: ${FDROID_REQUIRE_REPO_AUTH:-false}
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8080/api/repo/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

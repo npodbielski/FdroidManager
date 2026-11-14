@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FdroidMgr.Api/FdroidMgr.Api.csproj" />
+  </Folder>
+  <Folder Name="/test/">
+    <Project Path="test/FdroidMgr.Tests.Unit/FdroidMgr.Tests.Unit.csproj" />
+    <Project Path="test/FdroidMgr.Tests.Component/FdroidMgr.Tests.Component.csproj" />
+  </Folder>
+</Solution>

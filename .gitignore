@@ -1,0 +1,38 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+
+## Test results
+test-results/
+*.coverage
+*.coveragexml
+
+## Local data (never commit secrets / repos)
+data/
+*.db
+*.db-shm
+*.db-wal
+keys/
+# Default drop-in host dir from docker-compose.yml
+fdroidrepo/
+# Browser demo working dir (publish output, demo repo, database, logs)
+demo/work/
+
+## IDE
+.vs/
+.idea/
+
+## OS
+.DS_Store
+.env
+
+## Operator-editable OIDC config (holds the encrypted client secret — never commit).
+config/appsettings.json
+
+## fdroidserver-generated repo output (index files, icons, status/*.json).
+## This is runtime state rewritten on every `fdroid update`; the live repo
+## is hosted outside the project (mounted as /data/fdroidrepo).
+repo/
+node_modules/

@@ -1,0 +1,13 @@
+[
+  {
+    "ClientId": "fdroidmgr",
+    "Description": "F-Droid manager (authorization code + PKCE)",
+    "AllowedGrantTypes": ["authorization_code"],
+    "RequireClientSecret": false,
+    "RedirectUris": ["http://localhost:8082/signin-oidc"],
+    "AllowedScopes": ["openid", "profile", "email"],
+    "RequirePkce": true,
+    "AllowAccessTokensViaBrowser": true,
+    "AlwaysIncludeUserClaimsInIdToken": true
+  }
+]

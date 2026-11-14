@@ -1,0 +1,14 @@
+{
+  "platformOptions": {
+    "Coverlet": {
+      "include": "[FdroidMgr.Api]*",
+      "exclude": "[*.Tests]*",
+      "excludeByAttribute": "GeneratedCode,ExcludeFromCodeCoverage,ExcludeFromCodeCoverageAttribute,CompilerGeneratedAttribute",
+      "format": "cobertura,json",
+      "useSourceLink": false,
+      "skipAutoProps": true,
+      "includeTestAssembly": false,
+      "excludeAssembliesWithoutSources": "MissingAll"
+    }
+  }
+}

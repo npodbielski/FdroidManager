@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>F-Droid Repository Manager</title>
+<script>
+  (function () {
+    var t = localStorage.getItem("fdroidmgr-theme");
+    if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    document.documentElement.dataset.theme = t;
+  })();
+
+</script>
+<link rel="stylesheet" href="/css/ui.css" />
+<link rel="stylesheet" href="/css/unocss.css" />
+<script defer src="/js/alpine.min.js"></script>
+</head>
+<body x-data="fdroidApp()">
+<header>
+  <h1>F-Droid Repository Manager</h1>
+  <div class="header-actions">
+    <span id="index-health"></span>
+    <a id="repo-link" class="btn-ghost shrink-0 whitespace-nowrap" href="/fdroid/repo/index.html"
+       target="_blank" rel="noopener">📦 View Repo</a>
+    <span class="w-[0.35rem] shrink-0" aria-hidden="true"></span>
+    <button id="theme-toggle" class="btn-ghost shrink-0 whitespace-nowrap" type="button" title="Toggle dark theme" aria-label="Toggle dark theme" @click="toggleTheme()">🌙</button>
+    <div x-data="{ open:false }" class="relative ml-auto shrink-0 hidden" id="user-menu" :class="{ hidden: !userMenuVisible }" @click.outside="open=false" @keydown.escape.window="open=false">
+      <button id="user-menu-toggle" class="chip-user" type="button" aria-haspopup="menu" :aria-expanded="open" @click.stop="open = !open">
+        <span id="user-avatar-fallback" class="avatar avatar-fallback" aria-hidden="true">👤</span>
+        <img id="user-avatar" class="avatar object-cover bg-white/15" alt="" hidden />
+        <span id="user-name" class="max-w-12ch overflow-hidden text-ellipsis whitespace-nowrap" x-text="user"></span>
+        <span class="text-[0.65rem] opacity-85">▾</span>
+      </button>
+      <div id="user-menu-dropdown" class="menu hidden" role="menu" :class="{ hidden: !open }">
+        <button id="menu-api-keys" type="button" role="menuitem" @click="open=false; showApiKeys()">🔑 API keys</button>
+        <button id="menu-signout" type="button" role="menuitem" @click="open=false; signOut()">Sign out</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section id="oauth-wizard" class="card hidden" :class="{ hidden: view !== 'oauth-wizard' }">
+    <h2>Set up sign-in</h2>
+    <p class="hint">First boot: connect this manager to your identity provider (Keycloak / Authentik / Zitadel). Settings are saved server-side and take effect immediately — no restart needed.</p>
+    <form id="oauth-form" class="form-grid" @submit.prevent="submitOauth($event)">
+      <label class="col-full">Identity server URL
+        <input name="authority" required placeholder="https://id.example.com/realms/fdroid" />
+      </label>
+      <label>Client ID <input name="clientId" required placeholder="fdroidmgr" /></label>
+      <label class="col-full">Scopes (optional, space-separated)
+        <input name="scopes" placeholder="openid profile email" />
+      </label>
+      <label class="col-full"><input type="checkbox" name="allowInsecure" /> Allow plain HTTP (LAN/dev only)</label>
+      <div class="col-full"><button type="submit" class="btn-primary">Save settings</button></div>
+    </form>
+    <p class="hint" id="oauth-status" x-text="oauthStatusMsg"></p>
+  </section>
+
+  <section id="login" class="card hidden" :class="{ hidden: view !== 'login' }">
+    <h2>Sign in</h2>
+    <p class="hint">Sign in with your identity provider to manage this repository.</p>
+    <button id="login-btn" class="btn-primary" @click="login()">Sign in with SSO</button>
+    <p class="hint" id="login-wait" x-show="loginState === 'pending'">
+      Complete the sign-in in the popup window…
+      <button class="btn-link" type="button" @click="loginInThisTab()">or sign in in this tab</button>
+    </p>
+    <p class="msg err" id="login-failed" x-show="loginState === 'failed'">
+      Sign-in did not finish.
+      <button class="btn-link" type="button" @click="loginInThisTab()">Sign in in this tab</button>
+    </p>
+    <p class="msg err" id="login-error" x-show="signInError" x-text="signInError"></p>
+  </section>
+
+  <section id="init-wizard" class="card hidden" :class="{ hidden: view !== 'init-wizard' }">
+    <h2>Initialize repository</h2>
+    <p class="hint">First boot: this F-Droid repo is not initialized yet. Fill in the details to create the repo signing key, config, and index.</p>
+    <form id="init-form" class="form-grid" @submit.prevent="submitInit($event)">
+      <label>Repo name <input name="repoName" required placeholder="My F-Droid Repository" /></label>
+      <label>Key alias (optional) <input name="keyAlias" placeholder="fdroid-repo" /></label>
+      <label class="col-full">Repo description <textarea name="repoDescription" rows="2"></textarea></label>
+      <div class="col-full"><button type="submit" class="btn-primary">Initialize repository</button></div>
+    </form>
+    <p class="hint" id="init-repo-url" x-text="initRepoUrlMsg"></p>
+    <p class="hint" id="init-status" x-text="initStatusMsg"></p>
+  </section>
+
+  <section id="api-keys-page" class="hidden" :class="{ hidden: view !== 'api-keys-page' }" x-data="apiKeysView()">
+    <h2 class="page-title">API keys <button id="api-keys-back" class="btn-quiet" type="button" @click="showWorkspace(user)">← Back to apps</button></h2>
+    <p class="hint">API keys let CI pipelines and tools call the manager API without an interactive sign-in. The secret is shown once at creation.</p>
+
+    <div id="fdroid-client-key" class="card col gap-2">
+      <h3>F-Droid Client Access</h3>
+      <p class="hint">Dedicated repo key for the F-Droid client (read-only). It can always be re-displayed — regenerate it to invalidate every client URL at once.</p>
+      <div id="fdroid-key-body"></div>
+    </div>
+
+    <details class="card" id="api-key-create-panel" open>
+      <summary>＋ Create API key</summary>
+      <form id="api-key-create-form" class="form-grid" @submit.prevent="submitCreate($event)">
+        <label class="col-full">Name
+          <input name="name" required maxlength="200" placeholder="CI pipeline" />
+        </label>
+        <fieldset class="col-full scope-fieldset">
+          <legend>Scopes</legend>
+          <label class="scope-label"><input type="checkbox" name="scope" value="read" checked /> read — list apps, releases, signing keys, metadata</label>
+          <label class="scope-label"><input type="checkbox" name="scope" value="apps:write" /> apps:write — create/update/delete apps, icons, signing keys</label>
+          <label class="scope-label"><input type="checkbox" name="scope" value="releases:write" /> releases:write — publish/delete releases, edit changelogs</label>
+          <p class="hint">apps:write and releases:write automatically include read.</p>
+        </fieldset>
+        <label class="col-full">Expires after (days, optional)
+          <input name="expiresDays" type="number" min="1" placeholder="e.g. 365" />
+        </label>
+        <div class="col-full"><button type="submit" class="btn-primary">Create key</button></div>
+      </form>
+    </details>
+
+    <div id="api-key-reveal" class="card hidden"></div>
+    <div id="api-key-list" class="cards">
+      <template x-if="keys.length === 0 && !error"><p class="hint">No API keys yet — create one above.</p></template>
+      <template x-if="error"><p class="msg err" x-text="error"></p></template>
+      <template x-for="key in keys" :key="key.id">
+        <div x-html="renderApiKeyCard(key)"></div>
+      </template>
+    </div>
+  </section>
+
+  <section id="workspace" class="hidden" :class="{ hidden: view !== 'workspace' }" x-data="workspaceView()">
+    <div class="toolbar">
+      <h2 class="page-title">Apps <button id="refresh-btn" class="hidden" :class="{ hidden: apps.length === 0 && q === '' }" type="button" @click="load()">↻</button></h2>
+      <button id="stats-btn" class="btn-primary" type="button" @click="showStats()">📊 Statistics</button>
+    </div>
+
+    <details class="card summary-toggle" id="create-app-panel" open>
+      <summary>＋ Register new app</summary>
+      <form id="create-form" class="form-grid" @submit.prevent="submitCreate($event)">
+        <label>Package name
+          <input name="packageName" placeholder="org.example.myapp" required pattern="[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+" />
+        </label>
+        <label>Name <input name="name" required maxlength="50" /></label>
+        <label>Summary <input name="summary" maxlength="80" /></label>
+        <label>License <input name="license" value="MIT" /></label>
+        <label>Website <input name="website" /></label>
+        <label>Source code <input name="sourceCode" /></label>
+        <label class="col-full">Description <textarea name="description" rows="3" maxlength="4000"></textarea></label>
+        <label class="col-full">
+          <input type="checkbox" name="generateKey" checked /> Generate signing key automatically
+        </label>
+        <div class="col-full"><button type="submit" class="btn-primary">Create app</button></div>
+      </form>
+    </details>
+
+    <div class="toolbar-search">
+      <input id="app-search" type="search" placeholder="Filter by name, package or summary…" aria-label="Filter apps" @input.debounce.300ms="onSearchInput($event)" />
+      <select id="app-sort" aria-label="Sort apps" @change="onSortChange($event)">
+        <option value="">Package A–Z</option>
+        <option value="name-asc">Name A–Z</option>
+        <option value="name-desc">Name Z–A</option>
+        <option value="pkg-desc">Package Z–A</option>
+      </select>
+    </div>
+
+    <div id="app-list" class="cards">
+      <template x-if="error"><p class="msg err" x-text="error"></p></template>
+      <template x-if="!error && apps.length === 0"><p class="hint" x-text="emptyMsg"></p></template>
+      <template x-for="app in apps" :key="app.packageName">
+        <div class="card" :data-pkg="app.packageName">
+          <div class="flex gap-3 items-start">
+            <img class="app-icon" :src="iconSrc(app)" :alt="app.icon ? 'Change app icon' : 'Set app icon'" loading="lazy" title="Set / change app icon" @click="cardAction('icon', app.packageName)" @error="app.iconBroken = true" />
+            <div class="flex-1 min-w-0">
+              <h3 style="margin:0 0 0.25rem"><span x-text="app.name"></span> <code x-text="app.packageName"></code>
+                <button class="btn-link" @click="cardAction('releases', app.packageName)">releases</button>
+                <button class="btn-link" @click="cardAction('metadata', app.packageName)">metadata</button>
+                <button class="btn-link" @click="cardAction('key', app.packageName)">key</button>
+                <button class="btn-link" @click="cardAction('icon', app.packageName)">icon</button>
+                <button class="btn-link btn-danger" @click="cardAction('delete', app.packageName)">✕</button>
+              </h3>
+              <p style="margin:0;color:var(--muted);font-size:0.85rem" x-text="app.summary || ''"></p>
+              <p style="margin:0.4rem 0 0;font-size:0.85rem">
+                Version <b x-text="app.latestVersion || '—'"></b> (code <span x-text="app.latestVersionCode ?? '—'"></span>)
+                · <span x-text="app.versionCount"></span> release(s) · license <span x-text="app.license"></span>
+              </p>
+            </div>
+          </div>
+          
+          <template x-if="app.panel">
+            <div class="panel card" :data-action="app.panel" x-effect="openPanel(app.panel, app.packageName, $el)"></div>
+          </template>
+        </div>
+      </template>
+    </div>
+    <div id="app-pager" class="pager hidden" :class="{ hidden: !(apps.length > 0 && !error) }">
+      <button id="app-prev" class="btn-quiet" type="button" @click="prevPage()" :disabled="page <= 1">‹ Prev</button>
+      <span id="app-page-info" class="hint" x-text="'Page ' + page"></span>
+      <button id="app-next" class="btn-quiet" type="button" @click="nextPage()" :disabled="!hasMore">Next ›</button>
+    </div>
+  </section>
+
+  <section id="stats-page" class="hidden" :class="{ hidden: view !== 'stats-page' }" x-data="statsView()">
+    <div class="toolbar">
+      <h2 id="stats-title" class="page-title">Statistics <button id="stats-back" class="btn-quiet" type="button" @click="showWorkspace(user)">← Back to apps</button></h2>
+    </div>
+
+    <div class="card stat-total">
+      <div class="stat-label">Total APK downloads</div>
+      <div class="stat-value" id="stats-total" x-text="total">—</div>
+    </div>
+
+    <div class="card">
+      <h3>Last 30 days</h3>
+      <p class="hint">APK downloads per day (UTC).</p>
+      <div id="stats-chart" class="mt-1" role="img" aria-label="Daily downloads bar chart" x-html="chart"></div>
+    </div>
+
+    <div class="card">
+      <h3>Per app</h3>
+      <p id="stats-apps-empty" class="hint" x-text="appsEmpty"></p>
+      <div id="stats-apps" class="grid gap-2">
+        <template x-for="a in appRows" :key="a.packageName">
+          <div x-html="renderAppStat(a, maxApp)"></div>
+        </template>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Per release</h3>
+      <p id="stats-releases-empty" class="hint" x-text="releasesEmpty"></p>
+      <div id="stats-releases" class="grid gap-2">
+        <template x-for="r in releaseRows" :key="r.packageName + ':' + r.versionCode">
+          <div x-html="renderReleaseStat(r)"></div>
+        </template>
+      </div>
+    </div>
+  </section>
+</main>
+
+<dialog class="dialog-shell" id="health-dialog" aria-label="Index build error details">
+  <div class="dialog-head">
+    <h3>Index build error</h3>
+    <button id="health-dialog-close" type="button" aria-label="Close">✕</button>
+  </div>
+  <div class="dialog-body">
+    <pre class="pre-block" id="health-dialog-body"></pre>
+  </div>
+</dialog>
+
+<dialog class="dialog-shell" id="changelog-dialog" aria-label="Release changelog">
+  <div class="dialog-head">
+    <h3 id="changelog-dialog-title">Changelog</h3>
+    <button id="changelog-dialog-close" type="button" aria-label="Close">✕</button>
+  </div>
+  <div class="dialog-body">
+    <pre class="pre-block" id="changelog-dialog-body"></pre>
+  </div>
+</dialog>
+
+<script src="/js/vendor/qrcode-generator.js"></script>
+<script src="/js/ui.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Component tests spin up the API via WebApplicationFactory -->
+    <VSTestCopyOutput>true</VSTestCopyOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- coverlet.MTP configuration: scope coverage to FdroidMgr.Api -->
+    <None Update="testconfig.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FdroidMgr.Api/FdroidMgr.Api.csproj" />
+    <ProjectReference Include="../FdroidMgr.Tests.Unit/FdroidMgr.Tests.Unit.csproj" />
+  </ItemGroup>
+
+</Project>

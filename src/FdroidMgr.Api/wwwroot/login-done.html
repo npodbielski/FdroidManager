@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign in — F-Droid Repository Manager</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+         font: 15px/1.5 system-ui, sans-serif; text-align: center; }
+  main { max-width: 26rem; padding: 1.5rem; }
+  a { color: inherit; }
+  #hint { color: color-mix(in srgb, currentColor 65%, transparent); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <p id="msg">Finishing sign-in…</p>
+  <p id="hint"></p>
+</main>
+<script>
+(async function () {
+  const msg = document.getElementById("msg");
+  const hint = document.getElementById("hint");
+
+  let signedIn = false;
+  try { signedIn = (await fetch("/api/auth/me", { cache: "no-store" })).ok; } catch { signedIn = false; }
+
+  if (!signedIn) {
+    msg.textContent = "Sign-in did not complete.";
+    hint.innerHTML = '<a href="/ui.html">Back to the manager</a>';
+    return;
+  }
+
+  msg.textContent = "Signed in ✓";
+  if (window.opener && !window.opener.closed) {
+    window.opener.postMessage({ type: "fdroidmgr:signed-in" }, window.location.origin);
+  }
+  window.close();
+
+  setTimeout(function () {
+    hint.innerHTML = 'Close this window, or <a href="/ui.html" target="_parent">continue in the manager</a>.';
+  }, 300);
+})();
+
+</script>
+</body>
+</html>
