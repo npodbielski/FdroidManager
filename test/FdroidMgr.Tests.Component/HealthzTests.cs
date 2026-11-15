@@ -2,21 +2,23 @@ using System.Net;
 using System.Text.Json;
 using FluentAssertions;
 using FdroidMgr.Api.Services;
-using FdroidMgr.Tests.Unit.Fixtures;
 using FdroidMgr.Tests.Component.Fixtures;
 
 namespace FdroidMgr.Tests.Component;
 
-[Collection(ProcessEnvSensitiveCollection.Name)]
-public class HealthzTests : IDisposable
+public class HealthzTests
 {
-    private readonly string? _previousRepoRoot = Environment.GetEnvironmentVariable("FDROID_REPO_ROOT");
-
     [Fact]
     public async Task Healthz_IsAnonymous_AndBootCompletesWithoutRebuild()
     {
-        Environment.SetEnvironmentVariable("FDROID_REPO_ROOT", null);
-        using var host = new TestHost(new TestHostOptions { DbName = "healthz.db", DirPrefix = "fdroidmgr-healthz" });
+        // The repo root is pinned per host: FDROID_REPO_ROOT is process-wide,
+        // and a parallel collection must not see it.
+        using var host = new TestHost(new TestHostOptions
+        {
+            DbName = "healthz.db",
+            DirPrefix = "fdroidmgr-healthz",
+            EnvVars = new Dictionary<string, string?> { ["FDROID_REPO_ROOT"] = null },
+        });
         var client = host.Client();
 
         var res = await client.GetAsync("/healthz");
@@ -38,12 +40,12 @@ public class HealthzTests : IDisposable
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var dir = Path.Combine(Path.GetTempPath(), $"fdroidmgr-healthz-boot-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
-        Environment.SetEnvironmentVariable("FDROID_REPO_ROOT", dir);
 
         using var host = new TestHost(new TestHostOptions
         {
             DbName = "healthz-boot.db",
             DirPrefix = "fdroidmgr-healthz-boot",
+            EnvVars = new Dictionary<string, string?> { ["FDROID_REPO_ROOT"] = dir },
             Runner = r => r.AsyncHandler = async (exe, args, _, _) =>
             {
                 if (exe == "fdroid" && args.Contains("update"))
@@ -72,11 +74,6 @@ public class HealthzTests : IDisposable
 
         host.Runner.Log.Should().Contain(i => i.Exe == "fdroid" && i.Args.Contains("update"));
         try { Directory.Delete(dir, true); } catch (IOException) { }
-    }
-
-    public void Dispose()
-    {
-        Environment.SetEnvironmentVariable("FDROID_REPO_ROOT", _previousRepoRoot);
     }
 
     private static async Task WaitUntil(Func<Task<bool>> condition)

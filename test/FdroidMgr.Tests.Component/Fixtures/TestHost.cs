@@ -22,6 +22,8 @@ public sealed record TestHostOptions
 
     public Action<IServiceCollection>? Services { get; init; }
 
+    public IReadOnlyDictionary<string, string?>? EnvVars { get; init; }
+
     public string DirPrefix { get; init; } = "fdroidmgr-host";
 
     public string? Root { get; init; }
@@ -91,6 +93,19 @@ public sealed class TestHost : IDisposable
 
                     services.RemoveAll<IRepoCommandRunner>();
                     services.AddSingleton<IRepoCommandRunner>(Runner);
+
+                    if (o.EnvVars is not null)
+                    {
+                        services.RemoveAll<IEnvironmentService>();
+                        var env = new FakeEnvironmentService();
+                        foreach (var (key, value) in o.EnvVars)
+                        {
+                            env.Vars[key] = value;
+                        }
+
+                        services.AddSingleton<IEnvironmentService>(env);
+                    }
+
                     o.Services?.Invoke(services);
                 });
             });

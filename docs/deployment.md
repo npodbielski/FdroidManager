@@ -190,8 +190,7 @@ The OIDC client is a public PKCE client: there is no client secret.
 **Option B — leave `/config` empty** and use the built-in first-run wizard: open
 `https://apps.example.com/ui`, fill in the issuer / client id / scopes, and
 save — the settings take effect immediately, **no restart needed**
-(the OpenIdConnect handler reads the provider config live on every request,
-plans/done/no-restart-plan.md).
+(the OpenIdConnect handler reads the provider config live on every request).
 
 ---
 
@@ -393,7 +392,7 @@ Back these up (in order of importance):
 - **"Sign in" loops back or 500s** — the callback URI in the IdP doesn't match
   `FDROID_PUBLIC_URL` + `/signin-oidc`, or the issuer is unreachable (the
   discovery fetch fails). OIDC settings themselves are live — no restart is
-  involved (plans/done/no-restart-plan.md).
+  involved.
 - **F-Droid client can't add the repo (401)** — you set
   `FDROID_REQUIRE_REPO_AUTH=true` but added the repo without credentials. Use
   the `https://user:apikey@host/fdroid/repo` form.

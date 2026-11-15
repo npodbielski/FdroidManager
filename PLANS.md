@@ -5,5 +5,3 @@ Agent plans live in `plans/`; finished plans move to `plans/done/`.
 
 | Plan | Status |
 |---|---|
-| [fdroidmgr — Initial Plan & Progress Log](plans/initial-plan.md) | all steps done (HTTPS lives in the SWAG proxy, tracked separately) |
-| [Hardening & cleanup plan](plans/done/hardening-plan.md) | done — post-review fixes (security, stability, structure) all landed |

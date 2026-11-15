@@ -109,4 +109,4 @@ From the repository root:
 - The OIDC config file (`FDROID_CONFIG_FILE`, default `/config/appsettings.json`)
   is watched with `reloadOnChange` and seeded with `{}` at boot when absent; the
   OpenIdConnect handler resolves the provider from it live on every request
-  (no container restart — `plans/done/no-restart-plan.md`).
+  (no container restart).

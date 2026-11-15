@@ -1,5 +1,6 @@
 bin/
 obj/
+node_modules/
 test-results/
 data/
 keys/
