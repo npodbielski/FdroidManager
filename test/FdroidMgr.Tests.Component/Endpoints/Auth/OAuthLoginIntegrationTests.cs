@@ -158,6 +158,8 @@ public class OAuthLoginIntegrationTests
         var meJson = JsonDocument.Parse(await me.Content.ReadAsStringAsync()).RootElement;
         meJson.GetProperty("username").GetString().Should().Be(FakeOidcServer.UserName);
         meJson.GetProperty("avatar").GetString().Should().Be(FakeOidcServer.Picture);
+
+        idp.ParRequestCount.Should().Be(0, "a public client cannot authenticate to the PAR endpoint");
     }
 
     [Fact]

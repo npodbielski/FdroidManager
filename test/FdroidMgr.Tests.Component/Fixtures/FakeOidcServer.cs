@@ -25,6 +25,11 @@ public sealed class FakeOidcServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, (string Nonce, string? CodeChallenge)> _codes = new();
     private readonly ConcurrentDictionary<string, string> _tokens = new();
 
+    // Keycloak advertises PAR but refuses it for a public client; a handler that pushes
+    // anyway fails the challenge before the browser reaches the provider.
+    public int ParRequestCount { get; private set; }
+
+
     private FakeOidcServer(WebApplication app, bool emitPicture) => (_app, _emitPicture) = (app, emitPicture);
 
     public string Authority { get; private set; } = "";
@@ -59,6 +64,8 @@ public sealed class FakeOidcServer : IAsyncDisposable
                 token_endpoint = iss + "/token",
                 userinfo_endpoint = iss + "/userinfo",
                 jwks_uri = iss + "/jwks",
+                pushed_authorization_request_endpoint = iss + "/par",
+                require_pushed_authorization_requests = false,
                 id_token_signing_alg_values_supported = new[] { "RS256" },
                 response_types_supported = new[] { "code" },
                 subject_types_supported = new[] { "public" },
@@ -83,6 +90,18 @@ public sealed class FakeOidcServer : IAsyncDisposable
                     },
                 },
             });
+        });
+
+        _app.MapPost("/par", (HttpContext ctx) =>
+        {
+            ParRequestCount++;
+            var authz = ctx.Request.Headers.Authorization.ToString();
+            if (!authz.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Json(new { error = "invalid_request", error_description = "Authentication failed." }, statusCode: 401);
+            }
+
+            throw new InvalidOperationException("a public client must not push authorization requests");
         });
 
         _app.MapGet("/authorize", (HttpContext ctx) =>

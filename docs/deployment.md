@@ -166,7 +166,10 @@ FDROID_REQUIRE_REPO_AUTH=false
 
 - Grant type: **authorization code + PKCE**.
 - Client type: **public** (no client secret). The manager always uses PKCE
-  and never sends a `client_secret`.
+  and never sends a `client_secret`. In Keycloak this means *Client
+  authentication* **off**; a confidential client fails sign-in with
+  `invalid_request` / `Authentication failed` because the manager has no
+  secret to authenticate to the token or PAR endpoint.
 - Redirect/callback URI: **`https://apps.example.com/signin-oidc`** (the
   `FDROID_PUBLIC_URL` plus `/signin-oidc`).
 - Scopes: `openid profile email` (add more as needed).

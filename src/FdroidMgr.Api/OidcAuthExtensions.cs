@@ -76,6 +76,8 @@ public static class OidcAuthExtensions
             o.ResponseMode = OpenIdConnectResponseMode.Query;
             o.UsePkce = true;
             o.SaveTokens = false;
+            // .NET 10 defaults to PAR, but in KeyCloak PAR is disabled for public clients
+            o.PushedAuthorizationBehavior = PushedAuthorizationBehavior.Disable;
             o.CallbackPath = "/signin-oidc";
             o.SignedOutCallbackPath = "/signout-oidc";
             o.GetClaimsFromUserInfoEndpoint = true;
