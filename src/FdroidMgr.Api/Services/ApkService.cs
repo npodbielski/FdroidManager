@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using FdroidMgr.Api.Abstractions;
 
@@ -29,9 +30,7 @@ public record ApkMetadata
 
 public partial class ApkService(ILogger<ApkService> log, IOService io, IEnvironmentService env) : IApkInspector
 {
-    public string SignerFingerprint(string apkPath) => ApkSignerFingerprint(apkPath);
-
-    public string ApkSignerFingerprint(string apkPath)
+    public ApkSignature VerifySignature(string apkPath)
     {
         var exe = ApkSignerPath;
         if (!io.FileExists(exe))
@@ -45,10 +44,75 @@ public partial class ApkService(ILogger<ApkService> log, IOService io, IEnvironm
         psi.ArgumentList.Add(apkPath);
         using var p = Process.Start(psi) ?? throw new InvalidOperationException("failed to start apksigner");
         var stdout = p.StandardOutput.ReadToEnd();
+        var stderr = p.StandardError.ReadToEnd();
         p.WaitForExit();
 
-        var m = System.Text.RegularExpressions.Regex.Match(stdout, @"SHA-256 digest:\s*([0-9a-fA-F]+)");
-        return m.Success ? m.Groups[1].Value.ToLowerInvariant() : "unknown";
+        var digest = System.Text.RegularExpressions.Regex
+            .Match(stdout, @"SHA-256 digest:\s*([0-9a-fA-F]+)");
+
+        if (p.ExitCode == 0 && digest.Success)
+        {
+            return new ApkSignature(ApkSignatureStatus.Verified, digest.Groups[1].Value.ToLowerInvariant());
+        }
+
+        var complaint = FirstLine(stderr.Length > 0 ? stderr : stdout);
+
+        try
+        {
+            return HasV1Signature(apkPath) || HasSigningBlock(apkPath)
+                ? Broken(complaint)
+                : new ApkSignature(ApkSignatureStatus.Unsigned);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException)
+        {
+            // Wrong signature or corrupt archive.
+            return Broken(complaint);
+        }
+    }
+
+    private static ApkSignature Broken(string complaint)
+        => new(ApkSignatureStatus.Broken, Detail: complaint.Length > 0 ? complaint : "signature does not verify");
+
+    // v1 (JAR) signing leaves a signature block next to the manifest.
+    private bool HasV1Signature(string apkPath)
+    {
+        using var zip = ZipFile.OpenRead(apkPath);
+        return zip.Entries.Any(e =>
+            e.FullName.StartsWith("META-INF/", StringComparison.OrdinalIgnoreCase)
+            && Path.GetExtension(e.FullName).ToUpperInvariant() is ".SF" or ".RSA" or ".DSA" or ".EC");
+    }
+
+    // v2/v3 signing leaves no file behind, only an "APK Sig Block 42" marker just before the central directory.
+    private bool HasSigningBlock(string apkPath)
+    {
+        using var fs = io.OpenRead(apkPath);
+        var tail = fs.Length >= 38 ? ReadAt(fs, fs.Length - 22, 22) : null;
+        if (tail is null || tail[0] != 'P' || tail[1] != 'K' || tail[2] != 5 || tail[3] != 6)
+        {
+            return false;
+        }
+
+        var centralDirectory = (long)BitConverter.ToUInt32(tail, 16);
+        var magic = centralDirectory >= 16 ? ReadAt(fs, centralDirectory - 16, 16) : null;
+        return magic is not null && Encoding.ASCII.GetString(magic) == "APK Sig Block 42";
+    }
+
+    private static byte[]? ReadAt(Stream fs, long offset, int count)
+    {
+        if (offset < 0 || offset + count > fs.Length)
+        {
+            return null;
+        }
+
+        fs.Seek(offset, SeekOrigin.Begin);
+        var buffer = new byte[count];
+        return fs.ReadAtLeast(buffer, count, throwOnEndOfStream: false) == count ? buffer : null;
+    }
+
+    private static string FirstLine(string text)
+    {
+        var line = text.Split('\n', '\r').FirstOrDefault(l => l.Trim().Length > 0)?.Trim() ?? "";
+        return line.Length > 300 ? line[..300] : line;
     }
 
     private string AaptPath

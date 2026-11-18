@@ -6,5 +6,8 @@ public interface IApkInspector
 {
     Task<ApkMetadata> ReadAsync(string apkPath, CancellationToken ct = default);
 
-    string SignerFingerprint(string apkPath);
+    /// <summary>
+    /// Checks the APK's signature.
+    /// </summary>
+    ApkSignature VerifySignature(string apkPath);
 }

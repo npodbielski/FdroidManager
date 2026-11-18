@@ -140,7 +140,7 @@ openssl rand -hex 32
 | `FDROID_DB` | no | `Data Source=fdroidmgr.db` | SQLite connection string |
 | `FDROID_CONFIG_FILE` | no | `/config/appsettings.json` | Where the OIDC wizard writes its settings |
 | `FDROID_DATAPROTECTION_PATH` | no | ephemeral | Where the ASP.NET key ring persists (survives restarts) |
-| `FDROID_REQUIRE_REPO_AUTH` | no | `false` | When `true`, `/fdroid/repo/**` (index + APKs) requires an API key or a session |
+| `FDROID_REQUIRE_REPO_AUTH` | no | `true` | When `true` (the default), `/fdroid/repo/**` (index + APKs) requires an API key or a session; set `false` to serve the repository anonymously |
 | `FDROID_PROCESS_TIMEOUT_SECONDS` | no | `900` (`fdroid`), `60` (other tools) | Kill-and-`exit 124` timeout for external processes (single value overrides both) |
 | `AAPT` / `APKSIGNER` | no | from `ANDROID_HOME` | Explicit paths to the Android tools |
 | `ANDROID_HOME` | no | `/opt/android-sdk` | SDK root for aapt/apksigner (bundled in the image) |
@@ -155,7 +155,7 @@ FDROID_MASTER_KEY=<openssl rand -hex 32 output>
 FDROID_REPO_URL=https://apps.example.com/fdroid/repo
 FDROID_REPO_NAME=My F-Droid Repository
 FDROID_PUBLIC_URL=https://apps.example.com
-FDROID_REQUIRE_REPO_AUTH=false
+FDROID_REQUIRE_REPO_AUTH=true
 ```
 
 ---
@@ -241,7 +241,7 @@ services:
       FDROID_KEY_PATH: /data/keys
       FDROID_DB: "Data Source=/data/fdroidmgr.db"
       FDROID_DATAPROTECTION_PATH: /data/dp-keys
-      FDROID_REQUIRE_REPO_AUTH: ${FDROID_REQUIRE_REPO_AUTH:-false}
+      FDROID_REQUIRE_REPO_AUTH: ${FDROID_REQUIRE_REPO_AUTH:-true}
 ```
 
 Start it:
@@ -269,7 +269,7 @@ podman run -d --name fdroidmgr -p 8082:8080 \
   -e FDROID_KEY_PATH=/data/keys \
   -e FDROID_DB="Data Source=/data/fdroidmgr.db" \
   -e FDROID_DATAPROTECTION_PATH=/data/dp-keys \
-  -e FDROID_REQUIRE_REPO_AUTH=false \
+  -e FDROID_REQUIRE_REPO_AUTH=true \
   fdroidmgr:latest
 ```
 
@@ -308,10 +308,13 @@ Notes:
 
 - Keep `proxy_set_header Host $host;` and forward `X-Forwarded-*` so redirects
   and `FDROID_PUBLIC_URL` derivation stay correct.
-- The F-Droid client talks to the repo over plain HTTP (possibly with Basic auth).
-  If `FDROID_REQUIRE_REPO_AUTH=true`, users add the repo as
+- The repository is gated by default: `/fdroid/repo/**` requires an API key, so
+  users add the repo to the F-Droid client as
   `https://user:apikey@apps.example.com/fdroid/repo` — the Basic credentials are
-  an API key created in the manager UI, not a password.
+  the per-user client key shown in the manager UI, not a password. A phone
+  cannot do a web login, which is why the key rides in the URL. Set
+  `FDROID_REQUIRE_REPO_AUTH=false` to serve the repository anonymously instead:
+  then anyone with the URL can browse and download everything.
 
 ---
 
@@ -346,8 +349,7 @@ curl http://localhost:8080/healthz
 # repo status (public, reports whether the index is healthy)
 curl https://apps.example.com/api/repo/status
 
-# private repo: this returns 401 without credentials when
-# FDROID_REQUIRE_REPO_AUTH=true, 200 with them
+# repo files are gated by default: 401 without credentials, 200 with them
 curl -u "user:fdmgr_<apikey>" https://apps.example.com/fdroid/repo/index.xml
 
 # the index-v1.json the manager itself reads
@@ -396,9 +398,10 @@ Back these up (in order of importance):
   `FDROID_PUBLIC_URL` + `/signin-oidc`, or the issuer is unreachable (the
   discovery fetch fails). OIDC settings themselves are live — no restart is
   involved.
-- **F-Droid client can't add the repo (401)** — you set
-  `FDROID_REQUIRE_REPO_AUTH=true` but added the repo without credentials. Use
-  the `https://user:apikey@host/fdroid/repo` form.
+- **F-Droid client can't add the repo (401)** — the repo is gated by default, so
+  the client needs the keyed URL `https://user:apikey@host/fdroid/repo` (shown in
+  the UI next to the client key). Only set `FDROID_REQUIRE_REPO_AUTH=false` if you
+  really want the repository readable by anyone with the URL.
 - **`fdroid update` fails inside the container** — check that the mounted repo
   root is writable and contains a valid `config.yml` (existing repo) or that you
   ran initialize (fresh repo).

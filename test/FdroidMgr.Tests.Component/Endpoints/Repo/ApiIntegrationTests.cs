@@ -13,7 +13,11 @@ public class ApiIntegrationTests(ApiFixture fx) : IClassFixture<ApiFixture>
     [Fact]
     public async Task RepoEndpoint_ServesIndex_AndAppliesAuthOnManagement()
     {
-        var pub = await fx.Client.GetAsync("/fdroid/repo/index.xml");
+        // the repository is gated by default: authenticated serves, anonymous does not
+        var gated = await fx.Client.GetAsync("/fdroid/repo/index.xml");
+        gated.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        var pub = await fx.Authenticated().GetAsync("/fdroid/repo/index.xml");
         pub.StatusCode.Should().Be(HttpStatusCode.OK);
         (await pub.Content.ReadAsStringAsync()).Should().Contain("<fdroid");
 

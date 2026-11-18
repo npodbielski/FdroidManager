@@ -69,11 +69,16 @@ public partial class ReleaseService(
             }
 
             var key = await keys.GetAvailableKeyAsync(packageName, branch, ct);
-            var isSigned = TryGetSignerFingerprint(tempPath, out var actualSigner);
+            var signature = apk.VerifySignature(tempPath);
 
-            if (!isSigned)
+            if (signature.Status == ApkSignatureStatus.Broken)
             {
+                throw new InvalidOperationException(
+                    $"APK signature does not verify, and it was not re-signed: {signature.Detail}");
+            }
 
+            if (signature.Status == ApkSignatureStatus.Unsigned)
+            {
                 Log.SigningUnsignedApk(log, packageName);
                 var signedPath = tempPath + ".signed.apk";
                 await keys.SignApkAsync(packageName, tempPath, signedPath, branch, ct);
@@ -83,14 +88,10 @@ public partial class ReleaseService(
 
                 meta = await apk.ReadAsync(tempPath, ct);
             }
-            else
+            else if (!string.Equals(signature.Fingerprint, key.Key.FingerprintSha256, StringComparison.OrdinalIgnoreCase))
             {
-
-                if (!string.Equals(actualSigner, key.Key.FingerprintSha256, StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidOperationException(
-                        $"APK signed with {actualSigner}, expected app key {key.Key.FingerprintSha256}");
-                }
+                throw new InvalidOperationException(
+                    $"APK signed with {signature.Fingerprint}, expected app key {key.Key.FingerprintSha256}");
             }
 
             var lastCode = FdroidRepoService.LastVersionCode(index1, packageName);
@@ -191,21 +192,6 @@ public partial class ReleaseService(
         return name;
     }
 
-    private bool TryGetSignerFingerprint(string apkPath, out string fingerprint)
-    {
-        try
-        {
-            fingerprint = apk.SignerFingerprint(apkPath);
-            return !string.IsNullOrEmpty(fingerprint) && fingerprint != "unknown";
-        }
-        catch (Exception ex)
-        {
-            Log.SignerFingerprintFailed(log, ex, apkPath);
-            fingerprint = "";
-            return false;
-        }
-    }
-
     private static partial class Log
     {
         [LoggerMessage(EventId = 17, Level = LogLevel.Information,
@@ -215,9 +201,5 @@ public partial class ReleaseService(
         [LoggerMessage(EventId = 18, Level = LogLevel.Information,
             Message = "Published {Pkg} {Vc} via fdroid update")]
         public static partial void ReleasePublished(ILogger logger, string pkg, int vc);
-
-        [LoggerMessage(EventId = 40, Level = LogLevel.Debug,
-            Message = "could not read the signer fingerprint of {Apk}; treating it as unsigned")]
-        public static partial void SignerFingerprintFailed(ILogger logger, Exception ex, string apk);
     }
 }

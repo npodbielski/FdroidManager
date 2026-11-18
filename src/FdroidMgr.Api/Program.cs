@@ -98,10 +98,10 @@ var publicBaseUrl = builder.Configuration["FDROID_PUBLIC_URL"]?.TrimEnd('/');
 
 auth.AddOidcProvider(publicBaseUrl);
 
-var requireRepoAuth = bool.TryParse(
+var requireRepoAuth = !bool.TryParse(
     builder.Configuration["FDROID_REQUIRE_REPO_AUTH"]
     ?? environment.GetEnvironmentVariable("FDROID_REQUIRE_REPO_AUTH"), out var repoAuthFlag)
-    && repoAuthFlag;
+    || repoAuthFlag;
 
 builder.Services.AddAuthorization(options =>
 {

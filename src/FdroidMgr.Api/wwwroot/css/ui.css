@@ -87,6 +87,14 @@ main { max-width: 1000px; margin: 1.5rem auto; padding: 0 1rem 2rem; }
 
 label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: var(--muted); }
 
+/* The rule above stacks a caption over its field; a checkbox and its caption
+   belong on one line, and in a column the box stretches to the label's width. */
+label:has(> input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 input, textarea, select {
   font: inherit;
   color: var(--ink);

@@ -84,11 +84,12 @@ public class AppMediaApiTests
         try
         {
 
-            var res = await factory.CreateClient().GetAsync($"/fdroid/repo/icons/{Icon}");
+            var c = Auth(factory);
+            var res = await c.GetAsync($"/fdroid/repo/icons/{Icon}");
             res.StatusCode.Should().Be(HttpStatusCode.OK);
             res.Content.Headers.ContentType!.MediaType.Should().Be("image/png");
 
-            var shot = await factory.CreateClient().GetAsync($"/fdroid/repo/{Pkg}/en-US/phoneScreenshots/home.png");
+            var shot = await c.GetAsync($"/fdroid/repo/{Pkg}/en-US/phoneScreenshots/home.png");
             shot.StatusCode.Should().Be(HttpStatusCode.OK);
             shot.Content.Headers.ContentType!.MediaType.Should().Be("image/png");
         }

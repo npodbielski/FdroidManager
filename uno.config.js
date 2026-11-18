@@ -113,7 +113,7 @@ export default {
     ["url-line", "block bg-pre-bg text-pre-ink rounded-field px-[0.7rem] py-[0.5rem] text-[0.78rem] break-all my-[0.35rem]"],
     ["qr-frame", "shrink-0 w-160px h-160px p-[0.5rem] border border-solid border-line rounded-tile bg-white [&_svg]:w-full [&_svg]:h-full [&_svg]:block"],
     ["scope-fieldset", "border border-solid border-line rounded-tile px-[0.8rem] py-[0.6rem] m-0 [&_legend]:text-[0.85rem] [&_legend]:text-muted [&_legend]:px-[0.3rem]"],
-    ["scope-label", "flex-row items-center gap-[0.4rem] text-ink text-[0.85rem] mt-[0.35rem] [&_input]:w-auto"],
+    ["scope-label", "text-ink text-[0.85rem] mt-[0.35rem]"],
     ["stat-total", "flex flex-col gap-[0.15rem]"],
     ["stat-label", "text-[0.8rem] text-muted uppercase tracking-0.04em"],
     ["stat-row", "border border-solid border-line rounded-tile px-[0.65rem] py-[0.5rem] bg-soft"],

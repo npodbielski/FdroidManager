@@ -38,7 +38,9 @@ public class AppReleasesApiTests
                 Sha256 = _sha256,
             });
 
-        public string SignerFingerprint(string apkPath) => "unknown";
+        public ApkSignature VerifySignature(string apkPath) => Signature;
+
+        public ApkSignature Signature { get; set; } = new(ApkSignatureStatus.Unsigned);
     }
 
     private sealed class FakeKeyService()
@@ -157,6 +159,48 @@ public class AppReleasesApiTests
             res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
             JsonDocument.Parse(await res.Content.ReadAsStringAsync()).RootElement
                 .GetProperty("error").GetString().Should().Contain("does not match app");
+        }
+        finally { try { Directory.Delete(repoRoot, true); } catch (IOException) { } }
+    }
+
+    [Fact]
+    public async Task Upload_BrokenSignature_Returns400()
+    {
+        var (repoRoot, _, inspector, factory) = await BootAsync();
+        await using var _ = factory;
+        try
+        {
+            var c = Auth(factory);
+            var pkg = "org.example.app";
+            await CreateAppAsync(c, pkg);
+
+            inspector.Signature = new ApkSignature(ApkSignatureStatus.Broken, Detail: "DOES NOT VERIFY");
+
+            var res = await UploadAsync(c, pkg);
+            res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            JsonDocument.Parse(await res.Content.ReadAsStringAsync()).RootElement
+                .GetProperty("error").GetString().Should().Contain("does not verify");
+        }
+        finally { try { Directory.Delete(repoRoot, true); } catch (IOException) { } }
+    }
+
+    [Fact]
+    public async Task Upload_ForeignSignature_Returns400()
+    {
+        var (repoRoot, _, inspector, factory) = await BootAsync();
+        await using var _ = factory;
+        try
+        {
+            var c = Auth(factory);
+            var pkg = "org.example.app";
+            await CreateAppAsync(c, pkg);
+
+            inspector.Signature = new ApkSignature(ApkSignatureStatus.Verified, "ff".PadRight(64, 'f'));
+
+            var res = await UploadAsync(c, pkg);
+            res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            JsonDocument.Parse(await res.Content.ReadAsStringAsync()).RootElement
+                .GetProperty("error").GetString().Should().Contain("expected app key");
         }
         finally { try { Directory.Delete(repoRoot, true); } catch (IOException) { } }
     }

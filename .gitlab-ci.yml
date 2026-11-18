@@ -95,12 +95,15 @@ dockerhub-push:
     IMAGE_TAR: fdroidmgr-$CI_COMMIT_SHORT_SHA.tar
   script:
     - set -eux
+    - APP_VERSION="$(sed -n 's:.*<VersionPrefix>\(.*\)</VersionPrefix>.*:\1:p' Version.props)"
+    - test -n "$APP_VERSION"
+    - APP_MINOR="${APP_VERSION%.*}"
+    - REPO="docker.io/${CI_DOCKER_HUB_USER}/fdroidmgr"
+    - TAGS="$REPO:latest $REPO:$CI_COMMIT_SHORT_SHA $REPO:$APP_VERSION $REPO:$APP_MINOR"
     - podman --storage-driver=vfs load -i "$IMAGE_TAR"
-    - podman --storage-driver=vfs tag "$IMAGE_TAG" "docker.io/${CI_DOCKER_HUB_USER}/fdroidmgr:latest"
-    - podman --storage-driver=vfs tag "$IMAGE_TAG" "docker.io/${CI_DOCKER_HUB_USER}/fdroidmgr:${CI_COMMIT_SHORT_SHA}"
+    - for ref in $TAGS; do podman --storage-driver=vfs tag "$IMAGE_TAG" "$ref"; done
     - printf '%s' "${CI_DOCKER_HUB_PAT}" | podman --storage-driver=vfs login docker.io -u "${CI_DOCKER_HUB_USER}" --password-stdin
-    - podman --storage-driver=vfs push "docker.io/${CI_DOCKER_HUB_USER}/fdroidmgr:latest"
-    - podman --storage-driver=vfs push "docker.io/${CI_DOCKER_HUB_USER}/fdroidmgr:${CI_COMMIT_SHORT_SHA}"
+    - for ref in $TAGS; do podman --storage-driver=vfs push "$ref"; done
 
 e2e-oidc:
   stage: validate

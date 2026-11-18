@@ -28,7 +28,7 @@ public class ReleaseServiceTests
     [Fact]
     public async Task PublishAsync_RejectsUnknownApp()
     {
-        var (_, svc, _, _, _) = CreateService(appExists: false);
+        var (_, svc, _, _, _, _) = CreateService(appExists: false);
         var act = async () => await svc.PublishAsync("org.example.test", ApkForm(), null, null, TestContext.Current.CancellationToken);
         await act.Should().ThrowAsync<KeyNotFoundException>();
     }
@@ -36,7 +36,7 @@ public class ReleaseServiceTests
     [Fact]
     public async Task PublishAsync_RejectsWrongPackage()
     {
-        var (db, svc, _, _, _) = CreateService(package: "org.example.other");
+        var (db, svc, _, _, _, _) = CreateService(package: "org.example.other");
         await TestDb.SeedKeyAsync(db, "org.example.test", SignerFp("org.example.test"));
 
         var act = async () => await svc.PublishAsync("org.example.test", ApkForm(), null, null, TestContext.Current.CancellationToken);
@@ -47,7 +47,7 @@ public class ReleaseServiceTests
     [Fact]
     public async Task PublishAsync_DropsApkUnderUploadName_AndWritesChangelog_AndReindexes()
     {
-        var (db, svc, repo, _, index) = CreateService();
+        var (db, svc, repo, _, index, _) = CreateService();
         await TestDb.SeedKeyAsync(db, "org.example.test", SignerFp("org.example.test"));
 
         var result = await svc.PublishAsync("org.example.test", ApkForm(), "first changes", null, TestContext.Current.CancellationToken);
@@ -68,7 +68,7 @@ public class ReleaseServiceTests
     public async Task PublishAsync_SecondRelease_RequiresHigherVersionCode()
     {
 
-        var (db, svc, _, _, _) = CreateService(initialIndex: IndexWith("org.example.test", 2));
+        var (db, svc, _, _, _, _) = CreateService(initialIndex: IndexWith("org.example.test", 2));
         await TestDb.SeedKeyAsync(db, "org.example.test", SignerFp("org.example.test"));
 
         var act = async () => await svc.PublishAsync("org.example.test", ApkForm(), null, null, TestContext.Current.CancellationToken);
@@ -79,7 +79,7 @@ public class ReleaseServiceTests
     [Fact]
     public async Task PublishAsync_DuplicateVersionCode_Rejected()
     {
-        var (db, svc, _, _, _) = CreateService(versionCode: 2, initialIndex: IndexWith("org.example.test", 2));
+        var (db, svc, _, _, _, _) = CreateService(versionCode: 2, initialIndex: IndexWith("org.example.test", 2));
         await TestDb.SeedKeyAsync(db, "org.example.test", SignerFp("org.example.test"));
 
         var act = async () => await svc.PublishAsync("org.example.test", ApkForm(), null, null, TestContext.Current.CancellationToken);
@@ -90,7 +90,7 @@ public class ReleaseServiceTests
     [Fact]
     public async Task PublishAsync_ReturnsVersionReadBackFromIndex()
     {
-        var (db, svc, repo, _, _) = CreateService(versionCode: 2);
+        var (db, svc, repo, _, _, _) = CreateService(versionCode: 2);
         await TestDb.SeedKeyAsync(db, "org.example.test", SignerFp("org.example.test"));
 
         repo.ReadIndexAsync(Arg.Any<RepoConfig>(), Arg.Any<CancellationToken>())
@@ -156,7 +156,7 @@ public class ReleaseServiceTests
                 LaunchableActivity = "org.example.test.MainActivity",
                 Sha256 = "ab".PadRight(64, 'c'),
             }));
-        inspector.SignerFingerprint(Arg.Any<string>()).Returns("unknown");
+        inspector.VerifySignature(Arg.Any<string>()).Returns(new ApkSignature(ApkSignatureStatus.Unsigned));
 
         var index = Substitute.ForPartsOf<RepoIndexService>(db, new FakeCommandRunner(), NullLogger<RepoIndexService>.Instance, TestIo.Real, repoLock, TestStages.Create());
         index.GenerateStrictAsync(Arg.Any<RepoConfig>(), Arg.Any<bool>(), Arg.Any<IRepoLockLease>(), Arg.Any<CancellationToken>())
@@ -207,7 +207,7 @@ public class ReleaseServiceTests
         return (db, svc);
     }
 
-    private (FdroidDb db, ReleaseService svc, FdroidRepoService repo, FdroidMetadataService metadata, RepoIndexService index) CreateService(
+    private (FdroidDb db, ReleaseService svc, FdroidRepoService repo, FdroidMetadataService metadata, RepoIndexService index, KeyService keys) CreateService(
         string package = "org.example.test",
         int versionCode = 1,
         string versionName = "1.0.0",
@@ -236,7 +236,7 @@ public class ReleaseServiceTests
                     Sha256 = "ab".PadRight(64, 'c'),
                 }));
 
-            inspector.SignerFingerprint(Arg.Any<string>()).Returns("unknown");
+            inspector.VerifySignature(Arg.Any<string>()).Returns(new ApkSignature(ApkSignatureStatus.Unsigned));
         }
 
         var index = Substitute.ForPartsOf<RepoIndexService>(db, new FakeCommandRunner(), NullLogger<RepoIndexService>.Instance, TestIo.Real, new RepoLock(), TestStages.Create());
@@ -267,13 +267,13 @@ public class ReleaseServiceTests
 
         var svc = new ReleaseService(db, inspector, keySvc, index, metadata, repo,
             logger ?? NullLogger<ReleaseService>.Instance, TestIo.Real, new RepoLock());
-        return (db, svc, repo, metadata, index);
+        return (db, svc, repo, metadata, index, keySvc);
     }
 
     [Fact]
     public async Task PublishAsync_ReplacesUnsafeCharactersInUploadName()
     {
-        var (db, svc, _, _, _) = CreateService();
+        var (db, svc, _, _, _, _) = CreateService();
         await TestDb.SeedKeyAsync(db, "org.example.test", SignerFp("org.example.test"));
 
         var result = await svc.PublishAsync(
@@ -289,10 +289,10 @@ public class ReleaseServiceTests
     }
 
     [Fact]
-    public async Task PublishAsync_FailsToReadSignature_LogsAndSignsItself()
+    public async Task PublishAsync_SignatureToolFails_AbortsWithoutSigning()
     {
-        // A fingerprint tool that blows up must not fail the publish: the APK is
-        // treated as unsigned, signed with the app key, and the reason is logged.
+        // Without a working verifier the APK's signature is unknown, and unknown
+        // is not the same as unsigned: signing here could re-sign tampered code.
         var throwing = Substitute.For<IApkInspector>();
         throwing.ReadAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new ApkMetadata
@@ -302,24 +302,45 @@ public class ReleaseServiceTests
                 VersionName = "1.0.0",
                 Sha256 = "ab".PadRight(64, 'c'),
             });
-        throwing.When(x => x.SignerFingerprint(Arg.Any<string>())).Throw(new IOException("apksigner missing"));
+        throwing.When(x => x.VerifySignature(Arg.Any<string>())).Throw(new IOException("apksigner missing"));
 
-        var logged = new List<string>();
-        var logger = Substitute.For<ILogger<ReleaseService>>();
-        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
-        logger.When(x => x.Log(
-                Arg.Any<LogLevel>(), Arg.Any<EventId>(), Arg.Any<object>(),
-                Arg.Any<Exception?>(), Arg.Any<Func<object, Exception?, string>>()))
-            .Do(call => logged.Add(call.ArgAt<object>(2).ToString()!));
-
-        var (db, svc, _, _, _) = CreateService(apk: throwing, logger: logger);
+        var (db, svc, _, _, _, _) = CreateService(apk: throwing);
         await TestDb.SeedKeyAsync(db, "org.example.test", SignerFp("org.example.test"));
 
-        var result = await svc.PublishAsync("org.example.test", ApkForm(), null, null,
+        var act = async () => await svc.PublishAsync("org.example.test", ApkForm(), null, null,
             TestContext.Current.CancellationToken);
 
-        result.VersionCode.Should().Be(1);
-        logged.Should().ContainSingle(x => x.Contains("could not read the signer fingerprint"));
+        await act.Should().ThrowAsync<IOException>();
+    }
+
+    [Fact]
+    public async Task PublishAsync_BrokenSignature_IsRefusedAndNotResigned()
+    {
+        var inspector = Substitute.For<IApkInspector>();
+        inspector.ReadAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new ApkMetadata
+            {
+                PackageName = "org.example.test",
+                VersionCode = 1,
+                VersionName = "1.0.0",
+                Sha256 = "ab".PadRight(64, 'c'),
+            });
+        inspector.VerifySignature(Arg.Any<string>())
+            .Returns(new ApkSignature(ApkSignatureStatus.Broken, Detail: "DOES NOT VERIFY"));
+
+        var (db, svc, _, _, index, keys) = CreateService(apk: inspector);
+        await TestDb.SeedKeyAsync(db, "org.example.test", SignerFp("org.example.test"));
+
+        var act = async () => await svc.PublishAsync("org.example.test", ApkForm(), null, null,
+            TestContext.Current.CancellationToken);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*does not verify*DOES NOT VERIFY*");
+        await keys.DidNotReceiveWithAnyArgs()
+            .SignApkAsync(default!, default!, default!, default, default);
+        await index.DidNotReceiveWithAnyArgs()
+            .GenerateStrictAsync(default!, default, default!, default);
+        File.Exists(Path.Combine(_repoPath, "org.example.test_1.apk")).Should().BeFalse();
     }
 
     private static IFormFile ApkForm(byte[]? bytes = null, string fileName = "app.apk")

@@ -53,19 +53,19 @@ public class ApkServiceZipTests : IDisposable
     }
 
     [Fact]
-    public void ApkSignerFingerprint_WhenAaptMissing_Throws()
+    public void VerifySignature_WhenApksignerMissing_Throws()
     {
         var env = new FakeEnvironmentService
         {
             Vars = { ["ANDROID_HOME"] = "/nonexistent-sdk", ["APKSIGNER"] = null },
         };
         var svc = new ApkService(_log, TestIo.Real, env);
-        var act = () => svc.ApkSignerFingerprint("/tmp/fake.apk");
+        var act = () => svc.VerifySignature("/tmp/fake.apk");
         act.Should().Throw<InvalidOperationException>().WithMessage("*apksigner not found*");
     }
 
     [Fact]
-    public void SignerFingerprint_UsesApkSignerPath()
+    public void VerifySignature_UsesApkSignerPath()
     {
         var svc = new ApkService(_log, TestIo.Real, new FakeEnvironmentService());
 
@@ -73,7 +73,7 @@ public class ApkServiceZipTests : IDisposable
         Environment.SetEnvironmentVariable("APKSIGNER", null);
         try
         {
-            var act = () => svc.SignerFingerprint("/tmp/fake.apk");
+            var act = () => svc.VerifySignature("/tmp/fake.apk");
             act.Should().Throw<InvalidOperationException>();
         }
         finally

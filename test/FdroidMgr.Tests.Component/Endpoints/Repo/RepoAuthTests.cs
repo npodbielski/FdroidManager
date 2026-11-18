@@ -95,6 +95,27 @@ public class RepoAuthTests
         finally { Dispose(factory, root); }
     }
 
+    [Fact]
+    public async Task NothingConfigured_IsGated()
+    {
+        // An unset FDROID_REQUIRE_REPO_AUTH must not mean "open": a deployment
+        // that never heard of the flag must not publish its repository by accident.
+        var host = new TestHost(new TestHostOptions
+        {
+            DbName = "repodefault.db",
+            MasterKey = MasterKey,
+            TestAuth = false,
+            DirPrefix = "fdroidmgr-repodefault",
+        });
+        try
+        {
+            File.WriteAllText(Path.Combine(host.RepoDir, "index.xml"), "<fdroid><repo name=\"X\" /></fdroid>");
+            var res = await host.Client(allowAutoRedirect: false).GetAsync("/fdroid/repo/index.xml");
+            res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+        finally { host.Dispose(); }
+    }
+
     private static (WebApplicationFactory<Program> Factory, string Root) NewFactory(
         bool requireRepoAuth)
     {

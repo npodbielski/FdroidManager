@@ -49,8 +49,8 @@ services:
       FDROID_DB: "Data Source=/data/fdroidmgr.db"
       # When true, the served repo (index/APKs/icons) requires an API key or an
       # interactive session; F-Droid passes its key as HTTP Basic auth
-      # (https://user:key@host/fdroid/repo). Default false = public repo.
-      FDROID_REQUIRE_REPO_AUTH: ${FDROID_REQUIRE_REPO_AUTH:-false}
+      # (https://user:key@host/fdroid/repo). Default true = gated repo.
+      FDROID_REQUIRE_REPO_AUTH: ${FDROID_REQUIRE_REPO_AUTH:-true}
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://localhost:8080/api/repo/status"]
       interval: 30s
